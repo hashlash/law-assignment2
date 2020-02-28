@@ -1,9 +1,14 @@
 package main
 
 import (
+    "os"
     "fmt"
+    "bytes"
+    "encoding/json"
     "io/ioutil"
     "net/http"
+    "net/url"
+    "path"
 )
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
@@ -23,11 +28,33 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
     fmt.Printf("File Size: %+v\n", handler.Size)
     fmt.Printf("MIME Header: %+v\n", handler.Header)
 
-    tempFile, err := ioutil.TempFile("files", "upload-*.png")
+    tempFile, err := ioutil.TempFile("files", "*-" + handler.Filename)
     if err != nil {
         fmt.Println(err)
     }
     defer tempFile.Close()
+
+    client := &http.Client{}
+    reqBody, _ := json.Marshal(map[string]string{
+        "FileName": handler.Filename,
+        "Path": tempFile.Name(),
+    })
+    u, _ := url.Parse(os.Getenv("METADATA_HOST"))
+    u.Path = path.Join(u.Path, "upload") + "/"
+    req, _ := http.NewRequest("POST", u.String(), bytes.NewBuffer(reqBody))
+    req.Header.Add("Authorization", r.Header.Get("Authorization"))
+    resp, _ := client.Do(req)
+
+    var result map[string]interface{}
+    json.NewDecoder(resp.Body).Decode(&result)
+    pretty, _ := json.MarshalIndent(result, "", "    ")
+    fmt.Println(string(pretty))
+
+    if resp.StatusCode == http.StatusUnauthorized {
+        os.Remove(tempFile.Name())
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
 
     fileBytes, err := ioutil.ReadAll(file)
     if err != nil {
@@ -55,7 +82,7 @@ func setupRoutes() {
     http.HandleFunc("/upload/", uploadFile)
     http.HandleFunc("/download/", downloadFile)
     //http.Handle("/download/", http.FileServer(http.Dir("./files")))
-    fmt.Println(http.ListenAndServe(":8888", nil))
+    fmt.Println(http.ListenAndServe(":8889", nil))
 }
 
 func main() {
